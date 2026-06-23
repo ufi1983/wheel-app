@@ -4,6 +4,7 @@ import 'package:http/http.dart' as http;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 // ----------------- Кольори / тема -----------------
 const gold = Color(0xFFD8A657);
@@ -11,21 +12,39 @@ const pos = Color(0xFF3FBF8F);
 const neg = Color(0xFFE0796B);
 const blue = Color(0xFF7AA2E8);
 
+// кольори, що адаптуються під світлу тему (для читабельності)
+bool _dk(BuildContext c) => Theme.of(c).brightness == Brightness.dark;
+Color cPos(BuildContext c) => _dk(c) ? const Color(0xFF3FBF8F) : const Color(0xFF1E9E6A);
+Color cNeg(BuildContext c) => _dk(c) ? const Color(0xFFE0796B) : const Color(0xFFCF5340);
+Color cBlue(BuildContext c) => _dk(c) ? const Color(0xFF7AA2E8) : const Color(0xFF3A66C8);
+Color cPnl(BuildContext c, num v) => v > 0 ? cPos(c) : (v < 0 ? cNeg(c) : Colors.grey);
+
 ThemeData buildTheme(bool dark) {
   final bg = dark ? const Color(0xFF0E141B) : const Color(0xFFF3F5F8);
   final surface = dark ? const Color(0xFF161E29) : Colors.white;
   final txt = dark ? const Color(0xFFE6EDF3) : const Color(0xFF1A2433);
-  return ThemeData(
+  final base = ThemeData(
     brightness: dark ? Brightness.dark : Brightness.light,
     scaffoldBackgroundColor: bg,
     cardColor: surface,
     colorScheme: (dark ? const ColorScheme.dark() : const ColorScheme.light())
         .copyWith(primary: gold, surface: surface),
-    textTheme: Typography.material2021().black.apply(
-        bodyColor: txt, displayColor: txt),
     useMaterial3: true,
   );
+  return base.copyWith(
+    textTheme: GoogleFonts.interTextTheme(base.textTheme).apply(bodyColor: txt, displayColor: txt),
+    appBarTheme: AppBarTheme(
+      backgroundColor: surface, foregroundColor: txt, elevation: 0,
+      titleTextStyle: GoogleFonts.spaceGrotesk(fontSize: 22, fontWeight: FontWeight.w700, color: txt),
+    ),
+  );
 }
+
+// заголовок (Space Grotesk) та моноширинний стиль для чисел (JetBrains Mono)
+TextStyle headFont({double size = 16, FontWeight w = FontWeight.w700, Color? c}) =>
+    GoogleFonts.spaceGrotesk(fontSize: size, fontWeight: w, color: c);
+TextStyle monoFont({double size = 14, FontWeight w = FontWeight.w600, Color? c}) =>
+    GoogleFonts.jetBrainsMono(fontSize: size, fontWeight: w, color: c);
 
 // ----------------- Налаштування (URL + токен + тема) -----------------
 class Settings extends ChangeNotifier {
@@ -343,6 +362,9 @@ class _OverviewPageState extends State<OverviewPage> {
                 style: const TextStyle(color: Colors.grey, fontSize: 12)),
           ]),
         )),
+        // Графік накопичення: факт vs ціль
+        if (series.length > 1)
+          _ChartCard(title: 'Накопичення: факт vs ціль', child: _cumChart(series)),
         // Найкращий / найгірший тиждень
         if (best != null && worst != null)
           Card(child: Padding(
@@ -403,6 +425,34 @@ class _OverviewPageState extends State<OverviewPage> {
         )),
       ]),
     );
+  }
+
+  Widget _cumChart(List series) {
+    final cumR = <FlSpot>[];
+    final cumT = <FlSpot>[];
+    for (int i = 0; i < series.length; i++) {
+      cumR.add(FlSpot(i.toDouble(), asD(series[i]['cum_realized'])));
+      cumT.add(FlSpot(i.toDouble(), asD(series[i]['cum_target'])));
+    }
+    return LineChart(LineChartData(
+      gridData: FlGridData(show: true, drawVerticalLine: false,
+          getDrawingHorizontalLine: (v) => FlLine(color: Colors.grey.withOpacity(.15), strokeWidth: 1)),
+      borderData: FlBorderData(show: false),
+      titlesData: FlTitlesData(
+        leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+        bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+      ),
+      lineTouchData: LineTouchData(enabled: false),
+      lineBarsData: [
+        LineChartBarData(spots: cumR, color: cPos(context), barWidth: 2.5,
+            isCurved: true, dotData: FlDotData(show: false),
+            belowBarData: BarAreaData(show: true, color: cPos(context).withOpacity(.10))),
+        LineChartBarData(spots: cumT, color: gold, barWidth: 2, isCurved: true,
+            dashArray: [5, 4], dotData: FlDotData(show: false)),
+      ],
+    ));
   }
 
   Widget _miniStat(String label, String wk, double val) => Column(children: [
@@ -751,39 +801,42 @@ class _CalendarPageState extends State<CalendarPage> {
       final prem = v != null ? asD(v['premium_sold']) : 0.0;
       final real = v != null ? asD(v['realized']) : 0.0;
       final hasData = prem > 0 || real != 0;
-      cells.add(Container(
-        decoration: BoxDecoration(
-          color: prem > 0
-              ? blue.withOpacity(dark ? .14 : .10)
-              : (dark ? Colors.white.withOpacity(.03) : Colors.black.withOpacity(.015)),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: prem > 0 ? blue.withOpacity(.35) : Colors.grey.withOpacity(.15),
-            width: prem > 0 ? 1 : .5,
+      cells.add(InkWell(
+        onTap: hasData
+            ? () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => DayDetailPage(date: key)))
+            : null,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          decoration: BoxDecoration(
+            color: prem > 0
+                ? cBlue(context).withOpacity(dark ? .16 : .12)
+                : (dark ? Colors.white.withOpacity(.03) : Colors.black.withOpacity(.02)),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: prem > 0 ? cBlue(context).withOpacity(.40) : Colors.grey.withOpacity(.18),
+              width: prem > 0 ? 1 : .5,
+            ),
           ),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('$day', textAlign: TextAlign.right,
-                style: TextStyle(fontSize: 11,
-                    color: hasData ? Theme.of(context).textTheme.bodyMedium?.color : Colors.grey,
-                    fontWeight: hasData ? FontWeight.w600 : FontWeight.normal)),
-            if (prem > 0)
-              FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
-                child: Text(money(prem),
-                    maxLines: 1,
-                    style: const TextStyle(fontSize: 11, color: blue,
-                        fontWeight: FontWeight.w700, fontFamily: 'monospace'))),
-            if (real != 0)
-              FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
-                child: Text('${real > 0 ? '+' : ''}${money(real)}',
-                    maxLines: 1,
-                    style: TextStyle(fontSize: 10.5, color: pnlColor(real),
-                        fontFamily: 'monospace'))),
-          ],
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('$day', textAlign: TextAlign.right,
+                  style: TextStyle(fontSize: 11,
+                      color: hasData ? Theme.of(context).textTheme.bodyMedium?.color : Colors.grey,
+                      fontWeight: hasData ? FontWeight.w600 : FontWeight.normal)),
+              if (prem > 0)
+                FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+                  child: Text(money(prem), maxLines: 1,
+                      style: monoFont(size: 11, w: FontWeight.w700, c: cBlue(context)))),
+              if (real != 0)
+                FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+                  child: Text('${real > 0 ? '+' : ''}${money(real)}', maxLines: 1,
+                      style: monoFont(size: 10.5, w: FontWeight.w600, c: cPnl(context, real)))),
+            ],
+          ),
         ),
       ));
     }
@@ -831,6 +884,105 @@ class _CalendarPageState extends State<CalendarPage> {
     decoration: BoxDecoration(color: c.withOpacity(.15), borderRadius: BorderRadius.circular(20)),
     child: Text(t, style: TextStyle(color: c, fontWeight: FontWeight.w600)),
   );
+}
+
+// ----------------- Екран деталей дня -----------------
+class DayDetailPage extends StatefulWidget {
+  final String date;
+  const DayDetailPage({super.key, required this.date});
+  @override
+  State<DayDetailPage> createState() => _DayDetailPageState();
+}
+
+class _DayDetailPageState extends State<DayDetailPage> {
+  Map<String, dynamic>? _d;
+  bool _loading = true;
+  String? _err;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    try {
+      final d = await Api.get('day', {'date': widget.date});
+      setState(() { _d = d as Map<String, dynamic>; _loading = false; });
+    } catch (e) { setState(() { _err = '$e'; _loading = false; }); }
+  }
+
+  String _fmtDate(String iso) {
+    final p = iso.split('-');
+    return p.length == 3 ? '${p[2]}.${p[1]}.${p[0]}' : iso;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('День ${_fmtDate(widget.date)}')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _err != null
+              ? _ErrorView(_err!, _load)
+              : _body(),
+    );
+  }
+
+  Widget _body() {
+    final opened = _d!['opened'] as List;
+    final closed = _d!['closed'] as List;
+    final premium = asD(_d!['premium']);
+    final realized = asD(_d!['realized']);
+    if (opened.isEmpty && closed.isEmpty) {
+      return const Center(child: Text('За цей день немає угод', style: TextStyle(color: Colors.grey)));
+    }
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      Row(children: [
+        Expanded(child: _sumCard('Продана премія', premium, cBlue(context))),
+        const SizedBox(width: 10),
+        Expanded(child: _sumCard('Реалізований P/L', realized, cPnl(context, realized))),
+      ]),
+      if (opened.isNotEmpty) ...[
+        _sectionTitle('Продані опціони (премія)'),
+        ...opened.map((t) => _row(t, isOpen: true)),
+      ],
+      if (closed.isNotEmpty) ...[
+        _sectionTitle('Закриті угоди (P/L)'),
+        ...closed.map((t) => _row(t, isOpen: false)),
+      ],
+    ]);
+  }
+
+  Widget _sumCard(String label, double val, Color c) => Card(child: Padding(
+    padding: const EdgeInsets.all(14),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+      const SizedBox(height: 4),
+      Text('${val > 0 && !label.contains('премія') ? '+' : ''}${money(val)}',
+          style: monoFont(size: 20, w: FontWeight.w700, c: c)),
+    ]),
+  ));
+
+  Widget _sectionTitle(String t) => Padding(
+    padding: const EdgeInsets.fromLTRB(4, 16, 4, 6),
+    child: Text(t, style: headFont(size: 15, w: FontWeight.w600, c: Colors.grey)),
+  );
+
+  Widget _row(dynamic t, {required bool isOpen}) {
+    final isOpt = t['asset_category'] == 'OPT';
+    final type = isOpt ? (t['put_call'] == 'P' ? 'PUT' : 'CALL') : '${t['asset_category']}';
+    final val = isOpen ? asD(t['proceeds']) : asD(t['realized_pnl']);
+    final c = isOpen ? cBlue(context) : cPnl(context, val);
+    return Card(child: ListTile(
+      dense: true,
+      title: Text('${t['underlying']}  $type', style: const TextStyle(fontWeight: FontWeight.w600)),
+      subtitle: Text(
+        '${t['strike'] != null ? 'strike ${asD(t['strike']).toStringAsFixed(2)}' : ''}'
+        '${t['expiry'] != null ? '  •  ${t['expiry']}' : ''}'
+        '  •  к-сть ${asD(t['quantity']).toStringAsFixed(0)}',
+        style: const TextStyle(fontSize: 12)),
+      trailing: Text('${val > 0 && !isOpen ? '+' : ''}${money(val)}',
+          style: monoFont(size: 14, w: FontWeight.w700, c: c)),
+    ));
+  }
 }
 
 // ----------------- Екран «Місяці» -----------------
