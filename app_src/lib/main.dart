@@ -258,6 +258,7 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _loading = true;
   String? _err;
   bool _showStk = false;
+  final Set<String> _expanded = {};
 
   @override
   void initState() {
@@ -371,11 +372,83 @@ class _DashboardPageState extends State<DashboardPage> {
                 const Padding(padding: EdgeInsets.all(16),
                     child: Text('Немає закритих угод', style: TextStyle(color: Colors.grey)))
               else
-                ...trades.map((t) => _tradeTile(t)),
+                ..._buildGroups(trades),
             ]),
           )),
           const SizedBox(height: 20),
         ],
+      ),
+    );
+  }
+
+  // групування по тікеру+типу (PUT/CALL окремо), з розкриттям
+  List<Widget> _buildGroups(List trades) {
+    final map = <String, Map<String, dynamic>>{};
+    for (final t in trades) {
+      final isOpt = t['asset_category'] == 'OPT';
+      final key = isOpt ? '${t['underlying']}|${t['put_call']}' : '${t['underlying']}|STK';
+      map.putIfAbsent(key, () => {
+        'key': key, 'underlying': t['underlying'], 'put_call': t['put_call'],
+        'asset': t['asset_category'], 'pnl': 0.0, 'prem': 0.0, 'comm': 0.0,
+        'items': <dynamic>[],
+      });
+      final g = map[key]!;
+      g['pnl'] += asD(t['realized_pnl']);
+      g['prem'] += asD(t['proceeds']);
+      g['comm'] += asD(t['commission']);
+      (g['items'] as List).add(t);
+    }
+    final out = <Widget>[];
+    for (final g in map.values) {
+      final items = g['items'] as List;
+      if (items.length == 1) { out.add(_tradeTile(items[0])); continue; }
+      final type = g['asset'] == 'OPT' ? (g['put_call'] == 'P' ? 'PUT' : 'CALL') : '${g['asset']}';
+      final pnl = g['pnl'] as double;
+      final open = _expanded.contains(g['key']);
+      out.add(Column(children: [
+        ListTile(
+          dense: true,
+          onTap: () => setState(() => open ? _expanded.remove(g['key']) : _expanded.add(g['key'])),
+          title: Row(children: [
+            Text('${g['underlying']}  $type', style: const TextStyle(fontWeight: FontWeight.w700)),
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 1),
+              decoration: BoxDecoration(color: gold.withOpacity(.18), borderRadius: BorderRadius.circular(10)),
+              child: Text('×${items.length}', style: const TextStyle(fontSize: 12, color: gold, fontWeight: FontWeight.w600)),
+            ),
+          ]),
+          subtitle: Text('Премія ${money(g['prem'])} · Комісія ${money(g['comm'])}',
+              style: const TextStyle(fontSize: 12)),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(money(pnl), style: TextStyle(color: pnlColor(pnl),
+                fontWeight: FontWeight.w700, fontFamily: 'monospace')),
+            Icon(open ? Icons.expand_less : Icons.expand_more, color: Colors.grey),
+          ]),
+        ),
+        if (open) ...items.map((t) => _detailTile(t)),
+        const Divider(height: 1),
+      ]));
+    }
+    return out;
+  }
+
+  Widget _detailTile(dynamic t) {
+    final pnl = asD(t['realized_pnl']);
+    return Container(
+      color: Colors.grey.withOpacity(.06),
+      padding: const EdgeInsets.only(left: 24, right: 4),
+      child: ListTile(
+        dense: true,
+        visualDensity: const VisualDensity(vertical: -3),
+        title: Text('${t['trade_date']}'
+            '${t['strike'] != null ? '  •  strike ${asD(t['strike']).toStringAsFixed(2)}' : ''}',
+            style: const TextStyle(fontSize: 13)),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(money(pnl), style: TextStyle(color: pnlColor(pnl), fontFamily: 'monospace', fontSize: 13)),
+          IconButton(icon: const Icon(Icons.close, size: 17),
+              onPressed: () => _confirmDelete(t['id'])),
+        ]),
       ),
     );
   }
@@ -472,7 +545,11 @@ class _CalendarPageState extends State<CalendarPage> {
     try {
       final ym = '${_month.year}-${_month.month.toString().padLeft(2, '0')}';
       final d = await Api.get('calendar', {'ym': ym});
-      setState(() { _days = Map<String, dynamic>.from(d['days'] ?? {}); _loading = false; _err = null; });
+      final raw = d['days'];
+      setState(() {
+        _days = raw is Map ? Map<String, dynamic>.from(raw) : {};
+        _loading = false; _err = null;
+      });
     } catch (e) {
       setState(() { _err = '$e'; _loading = false; });
     }
@@ -494,43 +571,63 @@ class _CalendarPageState extends State<CalendarPage> {
     final daysIn = DateTime(_month.year, _month.month + 1, 0).day;
     double sumPrem = 0, sumReal = 0;
     _days.forEach((k, v) { sumPrem += asD(v['premium_sold']); sumReal += asD(v['realized']); });
+    final dark = Theme.of(context).brightness == Brightness.dark;
 
+    // комірки днів (без днів тижня — вони в окремому рядку)
     final cells = <Widget>[];
-    for (var d in ['Нд','Пн','Вт','Ср','Чт','Пт','Сб']) {
-      cells.add(Center(child: Text(d, style: const TextStyle(fontSize: 11, color: Colors.grey))));
-    }
     for (int i = 0; i < firstDow; i++) cells.add(const SizedBox());
     for (int day = 1; day <= daysIn; day++) {
       final key = '${_month.year}-${_month.month.toString().padLeft(2,'0')}-${day.toString().padLeft(2,'0')}';
       final v = _days[key];
       final prem = v != null ? asD(v['premium_sold']) : 0.0;
       final real = v != null ? asD(v['realized']) : 0.0;
+      final hasData = prem > 0 || real != 0;
       cells.add(Container(
         decoration: BoxDecoration(
-          color: prem > 0 ? blue.withOpacity(.12) : Theme.of(context).cardColor,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: prem > 0 ? blue.withOpacity(.4) : Colors.grey.withOpacity(.2)),
+          color: prem > 0
+              ? blue.withOpacity(dark ? .14 : .10)
+              : (dark ? Colors.white.withOpacity(.03) : Colors.black.withOpacity(.015)),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: prem > 0 ? blue.withOpacity(.35) : Colors.grey.withOpacity(.15),
+            width: prem > 0 ? 1 : .5,
+          ),
         ),
-        padding: const EdgeInsets.all(4),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('$day', style: const TextStyle(fontSize: 11, color: Colors.grey)),
-          if (prem > 0)
-            Text(money(prem), style: const TextStyle(fontSize: 11, color: blue, fontWeight: FontWeight.w600)),
-          const Spacer(),
-          Text(real != 0 ? '${real > 0 ? '+' : ''}${money(real)}' : '\$0',
-              style: TextStyle(fontSize: 10, color: real != 0 ? pnlColor(real) : Colors.grey)),
-        ]),
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text('$day', textAlign: TextAlign.right,
+                style: TextStyle(fontSize: 11,
+                    color: hasData ? Theme.of(context).textTheme.bodyMedium?.color : Colors.grey,
+                    fontWeight: hasData ? FontWeight.w600 : FontWeight.normal)),
+            if (prem > 0)
+              FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+                child: Text(money(prem),
+                    maxLines: 1,
+                    style: const TextStyle(fontSize: 11, color: blue,
+                        fontWeight: FontWeight.w700, fontFamily: 'monospace'))),
+            if (real != 0)
+              FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
+                child: Text('${real > 0 ? '+' : ''}${money(real)}',
+                    maxLines: 1,
+                    style: TextStyle(fontSize: 10.5, color: pnlColor(real),
+                        fontFamily: 'monospace'))),
+          ],
+        ),
       ));
     }
 
     return Column(children: [
+      // навігація по місяцях
       Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(8, 10, 8, 4),
         child: Row(children: [
           IconButton(onPressed: () => _shift(-1), icon: const Icon(Icons.chevron_left)),
           Expanded(child: Text('${names[_month.month - 1]} ${_month.year}',
               textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))),
+              style: const TextStyle(fontSize: 19, fontWeight: FontWeight.bold))),
           IconButton(onPressed: () => _shift(1), icon: const Icon(Icons.chevron_right)),
         ]),
       ),
@@ -538,11 +635,22 @@ class _CalendarPageState extends State<CalendarPage> {
         _badge('Премія ${money(sumPrem)}', blue),
         _badge('Реаліз. ${sumReal >= 0 ? '+' : ''}${money(sumReal)}', pos),
       ]),
-      const SizedBox(height: 10),
+      const SizedBox(height: 14),
+      // рядок днів тижня
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        child: Row(children: [
+          for (final d in ['Нд','Пн','Вт','Ср','Чт','Пт','Сб'])
+            Expanded(child: Center(child: Text(d,
+                style: const TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.w600)))),
+        ]),
+      ),
+      const SizedBox(height: 6),
+      // сітка днів
       Expanded(child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
         child: GridView.count(
-          crossAxisCount: 7, crossAxisSpacing: 5, mainAxisSpacing: 5, childAspectRatio: .72,
+          crossAxisCount: 7, crossAxisSpacing: 6, mainAxisSpacing: 6, childAspectRatio: .80,
           children: cells,
         ),
       )),
@@ -565,6 +673,8 @@ class MonthlyPage extends StatefulWidget {
 
 class _MonthlyPageState extends State<MonthlyPage> {
   List _months = [];
+  List _years = [];
+  bool _yearly = false;
   bool _loading = true;
   String? _err;
 
@@ -573,8 +683,9 @@ class _MonthlyPageState extends State<MonthlyPage> {
 
   Future<void> _load() async {
     try {
-      final d = await Api.get('monthly');
-      setState(() { _months = d as List; _loading = false; });
+      final m = await Api.get('monthly');
+      final y = await Api.get('yearly');
+      setState(() { _months = m as List; _years = y as List; _loading = false; _err = null; });
     } catch (e) { setState(() { _err = '$e'; _loading = false; }); }
   }
 
@@ -582,39 +693,87 @@ class _MonthlyPageState extends State<MonthlyPage> {
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_err != null) return _ErrorView(_err!, _load);
-    if (_months.isEmpty) return const Center(child: Text('Даних поки немає'));
-    final totals = _months.map((m) => asD(m['realized_total'])).toList();
-    return ListView(children: [
-      _ChartCard(title: 'Премія по місяцях', child: BarChart(BarChartData(
-        gridData: FlGridData(show: true, drawVerticalLine: false),
-        borderData: FlBorderData(show: false),
-        titlesData: FlTitlesData(
-          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-          bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 26,
-            getTitlesWidget: (v, _) {
-              final i = v.toInt();
-              if (i < 0 || i >= _months.length) return const SizedBox();
-              return Text('${_months[i]['ym']}'.substring(5), style: const TextStyle(fontSize: 9));
-            }))),
-        barGroups: [
-          for (int i = 0; i < totals.length; i++)
-            BarChartGroupData(x: i, barRods: [
-              BarChartRodData(toY: totals[i], color: totals[i] >= 0 ? pos : neg, width: 14,
-                  borderRadius: BorderRadius.circular(3)),
-            ]),
-        ],
-      ))),
-      ..._months.map((m) => Card(child: ListTile(
-        title: Text('${m['ym']}'),
+    final data = _yearly ? _years : _months;
+    if (data.isEmpty) return const Center(child: Text('Даних поки немає'));
+    final labelKey = _yearly ? 'yr' : 'ym';
+    final totals = data.map((m) => asD(m['realized_total'])).toList();
+    final maxAbs = totals.fold<double>(1, (p, e) => e.abs() > p ? e.abs() : p);
+
+    return ListView(padding: const EdgeInsets.only(bottom: 24), children: [
+      // перемикач Місяць/Рік
+      Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+        child: Center(
+          child: SegmentedButton<bool>(
+            segments: const [
+              ButtonSegment(value: false, label: Text('Місяць')),
+              ButtonSegment(value: true, label: Text('Рік')),
+            ],
+            selected: {_yearly},
+            onSelectionChanged: (v) => setState(() => _yearly = v.first),
+          ),
+        ),
+      ),
+      _ChartCard(
+        title: _yearly ? 'Премія по роках' : 'Премія по місяцях',
+        child: BarChart(BarChartData(
+          alignment: BarChartAlignment.spaceAround,
+          maxY: maxAbs * 1.25,
+          minY: totals.any((e) => e < 0) ? -maxAbs * 1.25 : 0,
+          gridData: FlGridData(show: true, drawVerticalLine: false,
+              getDrawingHorizontalLine: (v) => FlLine(
+                  color: Colors.grey.withOpacity(.15), strokeWidth: 1)),
+          borderData: FlBorderData(show: false),
+          barTouchData: BarTouchData(
+            enabled: false,
+            touchTooltipData: BarTouchTooltipData(
+              getTooltipColor: (_) => Colors.transparent,
+              tooltipPadding: EdgeInsets.zero,
+              tooltipMargin: 2,
+              getTooltipItem: (group, gi, rod, ri) => BarTooltipItem(
+                _short(rod.toY),
+                TextStyle(fontSize: 10, color: pnlColor(rod.toY), fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+          titlesData: FlTitlesData(
+            leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+            bottomTitles: AxisTitles(sideTitles: SideTitles(showTitles: true, reservedSize: 24,
+              getTitlesWidget: (v, _) {
+                final i = v.toInt();
+                if (i < 0 || i >= data.length) return const SizedBox();
+                final lab = '${data[i][labelKey]}';
+                return Padding(padding: const EdgeInsets.only(top: 6),
+                    child: Text(_yearly ? lab : lab.substring(5),
+                        style: const TextStyle(fontSize: 10, color: Colors.grey)));
+              }))),
+          barGroups: [
+            for (int i = 0; i < totals.length; i++)
+              BarChartGroupData(x: i, showingTooltipIndicators: const [0], barRods: [
+                BarChartRodData(toY: totals[i], color: totals[i] >= 0 ? pos : neg,
+                    width: _yearly ? 38 : 18,
+                    borderRadius: const BorderRadius.vertical(top: Radius.circular(5))),
+              ]),
+          ],
+        )),
+      ),
+      ...data.map((m) => Card(child: ListTile(
+        title: Text('${m[labelKey]}', style: const TextStyle(fontWeight: FontWeight.w600)),
         subtitle: Text('Опціони ${money(asD(m['premium_opt']))} · Акції ${money(asD(m['realized_stk']))}'),
         trailing: Text(money(asD(m['realized_total'])),
             style: TextStyle(color: pnlColor(asD(m['realized_total'])),
                 fontWeight: FontWeight.bold, fontFamily: 'monospace')),
       ))),
-      const SizedBox(height: 20),
     ]);
+  }
+
+  // короткий підпис суми над стовпцем: $1.2k / $530
+  String _short(double v) {
+    final a = v.abs();
+    final s = a >= 1000 ? '\$${(a / 1000).toStringAsFixed(1)}k' : '\$${a.toStringAsFixed(0)}';
+    return '${v < 0 ? '-' : ''}$s';
   }
 }
 
