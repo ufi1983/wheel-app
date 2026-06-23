@@ -490,7 +490,10 @@ class _OverviewPageState extends State<OverviewPage> {
             style: headFont(size: 32, w: FontWeight.w700,
                 c: projPct >= 100 ? cPos(context) : gold)),
         Text('річної цілі за поточним темпом', style: const TextStyle(color: Colors.grey, fontSize: 12)),
-        const SizedBox(height: 12),
+        const SizedBox(height: 6),
+        Text(_motivation(projPct),
+            style: TextStyle(fontSize: 13, color: cPos(context), fontWeight: FontWeight.w500)),
+        const SizedBox(height: 8),
         LinearProgressIndicator(value: (curPct / 100).clamp(0.0, 1.0), minHeight: 8,
             backgroundColor: Colors.grey.withOpacity(.2), color: cPos(context),
             borderRadius: BorderRadius.circular(6)),
@@ -511,6 +514,14 @@ class _OverviewPageState extends State<OverviewPage> {
           c: Theme.of(context).textTheme.bodyMedium?.color)),
     ]),
   );
+
+  String _motivation(double projPct) {
+    if (projPct >= 110) return '🚀 Ви випереджаєте річну ціль — чудова робота!';
+    if (projPct >= 90)  return '💪 Майже точно в цілі, тримайте темп!';
+    if (projPct >= 70)  return '📈 Гарний темп, ціль реальна — не зупиняйтесь.';
+    if (projPct >= 40)  return '🌱 Стабільно рухаєтесь, що далі — то краще.';
+    return '🎯 Початок покладено. Кожен тиждень наближає до цілі.';
+  }
 
   Widget _cumChart(List series) {
     final cumR = <FlSpot>[];
@@ -557,6 +568,8 @@ class WheelPage extends StatefulWidget {
 
 class _WheelPageState extends State<WheelPage> {
   List _data = [];
+  Map<String, dynamic> _periods = {'years': [], 'months': []};
+  String _period = '';
   bool _loading = true;
   String? _err;
   final Set<String> _open = {};
@@ -565,9 +578,14 @@ class _WheelPageState extends State<WheelPage> {
   void initState() { super.initState(); _load(); }
 
   Future<void> _load() async {
+    setState(() => _loading = true);
     try {
-      final d = await Api.get('wheel');
-      setState(() { _data = d as List; _loading = false; });
+      final d = await Api.get('wheel', _period.isEmpty ? {} : {'period': _period});
+      setState(() {
+        _data = (d['items'] as List?) ?? [];
+        _periods = Map<String, dynamic>.from(d['periods'] ?? {'years': [], 'months': []});
+        _loading = false; _err = null;
+      });
     } catch (e) { setState(() { _err = '$e'; _loading = false; }); }
   }
 
@@ -585,17 +603,39 @@ class _WheelPageState extends State<WheelPage> {
 
   @override
   Widget build(BuildContext context) {
+    final years = (_periods['years'] as List?) ?? [];
+    final months = (_periods['months'] as List?) ?? [];
     return Scaffold(
       appBar: AppBar(title: const Text('Колесо по тікерах')),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : _err != null
-              ? _ErrorView(_err!, _load)
-              : _data.isEmpty
-                  ? const Center(child: Text('Даних немає'))
-                  : ListView(padding: const EdgeInsets.all(12), children: [
-                      for (final w in _data) _tickerCard(w),
-                    ]),
+      body: Column(children: [
+        // фільтр періоду
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Row(children: [
+            const Text('Період: ', style: TextStyle(color: Colors.grey)),
+            const SizedBox(width: 6),
+            Expanded(child: DropdownButton<String>(
+              isExpanded: true,
+              value: _period,
+              items: [
+                const DropdownMenuItem(value: '', child: Text('Весь час')),
+                ...years.map((y) => DropdownMenuItem(value: '$y', child: Text('Рік $y'))),
+                ...months.map((m) => DropdownMenuItem(value: '$m', child: Text('$m'))),
+              ],
+              onChanged: (v) { setState(() => _period = v ?? ''); _load(); },
+            )),
+          ]),
+        ),
+        Expanded(child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : _err != null
+                ? _ErrorView(_err!, _load)
+                : _data.isEmpty
+                    ? const Center(child: Text('За цей період даних немає'))
+                    : ListView(padding: const EdgeInsets.all(12), children: [
+                        for (final w in _data) _tickerCard(w),
+                      ])),
+      ]),
     );
   }
 
