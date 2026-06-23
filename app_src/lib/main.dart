@@ -210,8 +210,12 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _i = 0;
-  final _pages = const [DashboardPage(), CalendarPage(), MonthlyPage()];
-  final _titles = ['Тиждень', 'Календар', 'Місяці'];
+  final _pc = PageController();
+  final _pages = const [OverviewPage(), DashboardPage(), CalendarPage(), MonthlyPage()];
+  final _titles = ['Огляд', 'Тиждень', 'Календар', 'Місяці'];
+
+  @override
+  void dispose() { _pc.dispose(); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
@@ -230,11 +234,20 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
-      body: _pages[_i],
+      body: PageView(
+        controller: _pc,
+        onPageChanged: (v) => setState(() => _i = v),
+        children: _pages,
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _i,
-        onDestinationSelected: (v) => setState(() => _i = v),
+        onDestinationSelected: (v) {
+          setState(() => _i = v);
+          _pc.animateToPage(v,
+              duration: const Duration(milliseconds: 250), curve: Curves.easeOut);
+        },
         destinations: const [
+          NavigationDestination(icon: Icon(Icons.dashboard), label: 'Огляд'),
           NavigationDestination(icon: Icon(Icons.calendar_view_week), label: 'Тиждень'),
           NavigationDestination(icon: Icon(Icons.calendar_month), label: 'Календар'),
           NavigationDestination(icon: Icon(Icons.bar_chart), label: 'Місяці'),
@@ -242,6 +255,162 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+}
+
+// ----------------- Екран «Огляд» -----------------
+class OverviewPage extends StatefulWidget {
+  const OverviewPage({super.key});
+  @override
+  State<OverviewPage> createState() => _OverviewPageState();
+}
+
+class _OverviewPageState extends State<OverviewPage> {
+  Map<String, dynamic>? _dash;
+  Map<String, dynamic>? _pos;
+  List _years = [];
+  bool _loading = true;
+  String? _err;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final dash = await Api.get('dashboard');
+      final pos = await Api.get('positions');
+      final yr = await Api.get('yearly');
+      setState(() {
+        _dash = dash as Map<String, dynamic>;
+        _pos = pos as Map<String, dynamic>;
+        _years = yr as List;
+        _loading = false; _err = null;
+      });
+    } catch (e) { setState(() { _err = '$e'; _loading = false; }); }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_err != null) return _ErrorView(_err!, _load);
+    final series = (_dash!['series'] as List);
+    final cumR = series.isNotEmpty ? asD(series.last['cum_realized']) : 0.0;
+    final cumT = series.isNotEmpty ? asD(series.last['cum_target']) : 0.0;
+    final prog = cumT != 0 ? (cumR / cumT).clamp(0.0, 1.0) : 0.0;
+    final atRisk = _pos!['at_risk'] as Map<String, dynamic>;
+    final positions = _pos!['positions'] as List;
+
+    // найкращий / найгірший тиждень
+    Map<String, dynamic>? best, worst;
+    for (final w in series) {
+      if (asD(w['realized']) == 0) continue;
+      if (best == null || asD(w['realized']) > asD(best['realized'])) best = w;
+      if (worst == null || asD(w['realized']) < asD(worst['realized'])) worst = w;
+    }
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView(padding: const EdgeInsets.only(bottom: 24), children: [
+        // Капітал під ризиком
+        Card(child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.lock_outline, size: 18, color: gold),
+              const SizedBox(width: 6),
+              const Text('Капітал під ризиком', style: TextStyle(color: Colors.grey)),
+            ]),
+            const SizedBox(height: 6),
+            Text(money(asD(atRisk['risk'])),
+                style: const TextStyle(fontSize: 34, fontWeight: FontWeight.bold, color: gold)),
+            Text('${atRisk['count']} проданих путів · зарезервовано під CSP',
+                style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          ]),
+        )),
+        // Накопичено vs ціль
+        Card(child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            const Text('Накопичено vs ціль', style: TextStyle(color: Colors.grey)),
+            const SizedBox(height: 6),
+            Text(money(cumR), style: TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: pnlColor(cumR))),
+            const SizedBox(height: 10),
+            LinearProgressIndicator(value: prog, minHeight: 10,
+                backgroundColor: Colors.grey.withOpacity(.2), color: pos,
+                borderRadius: BorderRadius.circular(6)),
+            const SizedBox(height: 8),
+            Text('Ціль накопичена: ${money(cumT)} · ${(prog * 100).toStringAsFixed(0)}%',
+                style: const TextStyle(color: Colors.grey, fontSize: 12)),
+          ]),
+        )),
+        // Найкращий / найгірший тиждень
+        if (best != null && worst != null)
+          Card(child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Row(children: [
+              Expanded(child: _miniStat('Найкращий тиждень',
+                  '${best['label']}', asD(best['realized']))),
+              Container(width: 1, height: 40, color: Colors.grey.withOpacity(.2)),
+              Expanded(child: _miniStat('Найгірший тиждень',
+                  '${worst['label']}', asD(worst['realized']))),
+            ]),
+          )),
+        // По роках
+        if (_years.isNotEmpty)
+          Card(child: Padding(
+            padding: const EdgeInsets.all(18),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('Підсумок по роках', style: TextStyle(fontWeight: FontWeight.w600)),
+              const SizedBox(height: 10),
+              ..._years.map((y) => Padding(
+                padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                  Text('${y['yr']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                  Text(money(asD(y['realized_total'])),
+                      style: TextStyle(color: pnlColor(asD(y['realized_total'])),
+                          fontWeight: FontWeight.w700, fontFamily: 'monospace')),
+                ]),
+              )),
+            ]),
+          )),
+        // Відкриті позиції (короткий список)
+        Card(child: Padding(
+          padding: const EdgeInsets.all(18),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('Відкриті позиції (${positions.length})', style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            if (positions.isEmpty)
+              const Text('Немає або не додано секцію Open Positions у Flex',
+                  style: TextStyle(color: Colors.grey, fontSize: 12))
+            else
+              ...positions.take(8).map((p) {
+                final isOpt = p['asset_category'] == 'OPT';
+                final type = isOpt ? (p['put_call'] == 'P' ? 'PUT' : 'CALL') : '${p['asset_category']}';
+                final short = asD(p['quantity']) < 0;
+                return Padding(padding: const EdgeInsets.symmetric(vertical: 5),
+                  child: Row(children: [
+                    Expanded(child: Text('${p['underlying']}  $type'
+                        '${p['strike'] != null ? ' ${asD(p['strike']).toStringAsFixed(0)}' : ''}'
+                        '${p['expiry'] != null ? '  ${p['expiry']}' : ''}',
+                        style: const TextStyle(fontSize: 13))),
+                    Text('${short ? '' : '+'}${asD(p['quantity']).toStringAsFixed(0)}',
+                        style: TextStyle(fontFamily: 'monospace',
+                            color: short ? neg : pos, fontSize: 13)),
+                  ]),
+                );
+              }),
+          ]),
+        )),
+      ]),
+    );
+  }
+
+  Widget _miniStat(String label, String wk, double val) => Column(children: [
+    Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+    const SizedBox(height: 4),
+    Text(money(val), style: TextStyle(color: pnlColor(val), fontWeight: FontWeight.bold, fontFamily: 'monospace')),
+    Text(wk, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+  ]);
 }
 
 // ----------------- Екран «Тиждень» -----------------
