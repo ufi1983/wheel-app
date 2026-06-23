@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:fl_chart/fl_chart.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:local_auth/local_auth.dart';
 
 // ----------------- Кольори / тема -----------------
 const gold = Color(0xFFD8A657);
@@ -31,12 +32,14 @@ class Settings extends ChangeNotifier {
   String baseUrl = '';
   String token = '';
   bool dark = true;
+  bool biometric = false;
 
   Future<void> load() async {
     final p = await SharedPreferences.getInstance();
     baseUrl = p.getString('baseUrl') ?? '';
     token = p.getString('token') ?? '';
     dark = p.getBool('dark') ?? true;
+    biometric = p.getBool('biometric') ?? false;
     notifyListeners();
   }
 
@@ -53,6 +56,13 @@ class Settings extends ChangeNotifier {
     final p = await SharedPreferences.getInstance();
     dark = !dark;
     await p.setBool('dark', dark);
+    notifyListeners();
+  }
+
+  Future<void> setBiometric(bool v) async {
+    final p = await SharedPreferences.getInstance();
+    biometric = v;
+    await p.setBool('biometric', v);
     notifyListeners();
   }
 
@@ -121,8 +131,72 @@ class WheelApp extends StatelessWidget {
         title: 'Wheel Analytics',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(settings.dark),
-        home: settings.configured ? const HomePage() : const SettingsPage(first: true),
+        home: !settings.configured
+            ? const SettingsPage(first: true)
+            : (settings.biometric ? const LockScreen() : const HomePage()),
       ),
+    );
+  }
+}
+
+// ----------------- Екран блокування (відбиток) -----------------
+class LockScreen extends StatefulWidget {
+  const LockScreen({super.key});
+  @override
+  State<LockScreen> createState() => _LockScreenState();
+}
+
+class _LockScreenState extends State<LockScreen> {
+  String? _err;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _auth());
+  }
+
+  Future<void> _auth() async {
+    if (_busy) return;
+    setState(() { _busy = true; _err = null; });
+    try {
+      final auth = LocalAuthentication();
+      final can = await auth.isDeviceSupported();
+      if (!can) { _go(); return; } // пристрій без біометрії — пропускаємо
+      final ok = await auth.authenticate(
+        localizedReason: 'Вхід у Wheel Analytics',
+        options: const AuthenticationOptions(stickyAuth: true, biometricOnly: false),
+      );
+      if (ok) { _go(); return; }
+      setState(() { _busy = false; _err = 'Не підтверджено'; });
+    } catch (e) {
+      setState(() { _busy = false; _err = '$e'; });
+    }
+  }
+
+  void _go() {
+    if (!mounted) return;
+    Navigator.pushReplacement(context,
+        MaterialPageRoute(builder: (_) => const HomePage()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.fingerprint, size: 72, color: gold),
+        const SizedBox(height: 16),
+        const Text('Wheel Analytics', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        Text(_err ?? 'Підтвердіть особу для входу',
+            style: const TextStyle(color: Colors.grey)),
+        const SizedBox(height: 24),
+        FilledButton.icon(
+          onPressed: _busy ? null : _auth,
+          icon: const Icon(Icons.fingerprint),
+          label: const Text('Розблокувати'),
+        ),
+      ])),
     );
   }
 }
@@ -618,6 +692,32 @@ class _SettingsPageState extends State<SettingsPage> {
           child: const Text('Зберегти'),
         ),
         const SizedBox(height: 8),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Вхід за відбитком пальця'),
+          subtitle: const Text('Запитувати біометрію при відкритті'),
+          value: settings.biometric,
+          onChanged: (v) async {
+            if (v) {
+              try {
+                final auth = LocalAuthentication();
+                final ok = await auth.authenticate(
+                  localizedReason: 'Підтвердіть, щоб увімкнути вхід за відбитком',
+                  options: const AuthenticationOptions(stickyAuth: true, biometricOnly: false),
+                );
+                if (!ok) return;
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('Біометрія недоступна: $e')));
+                }
+                return;
+              }
+            }
+            await settings.setBiometric(v);
+            setState(() {});
+          },
+        ),
         TextButton.icon(
           onPressed: () => settings.toggleTheme(),
           icon: Icon(settings.dark ? Icons.light_mode : Icons.dark_mode),
