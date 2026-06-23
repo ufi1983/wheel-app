@@ -286,6 +286,7 @@ class OverviewPage extends StatefulWidget {
 class _OverviewPageState extends State<OverviewPage> {
   Map<String, dynamic>? _dash;
   Map<String, dynamic>? _pos;
+  Map<String, dynamic>? _pace;
   List _years = [];
   bool _loading = true;
   String? _err;
@@ -299,10 +300,12 @@ class _OverviewPageState extends State<OverviewPage> {
       final dash = await Api.get('dashboard');
       final pos = await Api.get('positions');
       final yr = await Api.get('yearly');
+      final pace = await Api.get('pace');
       setState(() {
         _dash = dash as Map<String, dynamic>;
         _pos = pos as Map<String, dynamic>;
         _years = yr as List;
+        _pace = pace as Map<String, dynamic>;
         _loading = false; _err = null;
       });
     } catch (e) { setState(() { _err = '$e'; _loading = false; }); }
@@ -359,6 +362,25 @@ class _OverviewPageState extends State<OverviewPage> {
                 style: const TextStyle(color: Colors.grey, fontSize: 12)),
           ]),
         )),
+        // Кнопки: Колесо / Експірації
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12),
+          child: Row(children: [
+            Expanded(child: OutlinedButton.icon(
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const WheelPage())),
+              icon: const Icon(Icons.donut_large, size: 18),
+              label: const Text('Колесо'))),
+            const SizedBox(width: 10),
+            Expanded(child: OutlinedButton.icon(
+              onPressed: () => Navigator.push(context,
+                  MaterialPageRoute(builder: (_) => const ExpirationsPage())),
+              icon: const Icon(Icons.event, size: 18),
+              label: const Text('Експірації'))),
+          ]),
+        ),
+        // Темп до річної цілі
+        if (_pace != null) _paceCard(),
         // Накопичено vs ціль
         Card(child: Padding(
           padding: const EdgeInsets.all(18),
@@ -422,15 +444,23 @@ class _OverviewPageState extends State<OverviewPage> {
                 final isOpt = p['asset_category'] == 'OPT';
                 final type = isOpt ? (p['put_call'] == 'P' ? 'PUT' : 'CALL') : '${p['asset_category']}';
                 final short = asD(p['quantity']) < 0;
+                final roc = p['roc_annual'];
                 return Padding(padding: const EdgeInsets.symmetric(vertical: 5),
                   child: Row(children: [
                     Expanded(child: Text('${p['underlying']}  $type'
                         '${p['strike'] != null ? ' ${asD(p['strike']).toStringAsFixed(0)}' : ''}'
                         '${p['expiry'] != null ? '  ${p['expiry']}' : ''}',
                         style: const TextStyle(fontSize: 13))),
+                    if (roc != null) Container(
+                      margin: const EdgeInsets.only(right: 8),
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                      decoration: BoxDecoration(color: cPos(context).withOpacity(.14),
+                          borderRadius: BorderRadius.circular(6)),
+                      child: Text('${asD(roc).toStringAsFixed(0)}%/р',
+                          style: monoFont(size: 11, w: FontWeight.w700, c: cPos(context))),
+                    ),
                     Text('${short ? '' : '+'}${asD(p['quantity']).toStringAsFixed(0)}',
-                        style: TextStyle(fontFamily: 'monospace',
-                            color: short ? neg : pos, fontSize: 13)),
+                        style: monoFont(size: 13, c: short ? cNeg(context) : cPos(context))),
                   ]),
                 );
               }),
@@ -439,6 +469,48 @@ class _OverviewPageState extends State<OverviewPage> {
       ]),
     );
   }
+
+  Widget _paceCard() {
+    final p = _pace!;
+    final projPct = asD(p['pct_projected']);
+    final realized = asD(p['realized']);
+    final annual = asD(p['annual_target']);
+    final proj = asD(p['projected_annual']);
+    final curPct = asD(p['pct_current']);
+    return Card(child: Padding(
+      padding: const EdgeInsets.all(18),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.speed, size: 18, color: gold),
+          const SizedBox(width: 6),
+          const Text('Темп до річної цілі', style: TextStyle(color: Colors.grey)),
+        ]),
+        const SizedBox(height: 8),
+        Text('${projPct.toStringAsFixed(0)}%',
+            style: headFont(size: 32, w: FontWeight.w700,
+                c: projPct >= 100 ? cPos(context) : gold)),
+        Text('річної цілі за поточним темпом', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+        const SizedBox(height: 12),
+        LinearProgressIndicator(value: (curPct / 100).clamp(0.0, 1.0), minHeight: 8,
+            backgroundColor: Colors.grey.withOpacity(.2), color: cPos(context),
+            borderRadius: BorderRadius.circular(6)),
+        const SizedBox(height: 10),
+        _paceRow('Зароблено (з ${p['days']} дн.)', money(realized)),
+        _paceRow('Прогноз на рік', money(proj)),
+        _paceRow('Річна ціль', money(annual)),
+        _paceRow('Виконано від цілі', '${curPct.toStringAsFixed(1)}%'),
+      ]),
+    ));
+  }
+
+  Widget _paceRow(String l, String v) => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 3),
+    child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      Text(l, style: const TextStyle(color: Colors.grey, fontSize: 13)),
+      Text(v, style: monoFont(size: 13, w: FontWeight.w600,
+          c: Theme.of(context).textTheme.bodyMedium?.color)),
+    ]),
+  );
 
   Widget _cumChart(List series) {
     final cumR = <FlSpot>[];
@@ -474,6 +546,181 @@ class _OverviewPageState extends State<OverviewPage> {
     Text(money(val), style: TextStyle(color: pnlColor(val), fontWeight: FontWeight.bold, fontFamily: 'monospace')),
     Text(wk, style: const TextStyle(color: Colors.grey, fontSize: 11)),
   ]);
+}
+
+// ----------------- Екран «Колесо по тікерах» -----------------
+class WheelPage extends StatefulWidget {
+  const WheelPage({super.key});
+  @override
+  State<WheelPage> createState() => _WheelPageState();
+}
+
+class _WheelPageState extends State<WheelPage> {
+  List _data = [];
+  bool _loading = true;
+  String? _err;
+  final Set<String> _open = {};
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    try {
+      final d = await Api.get('wheel');
+      setState(() { _data = d as List; _loading = false; });
+    } catch (e) { setState(() { _err = '$e'; _loading = false; }); }
+  }
+
+  String _eventLabel(dynamic e) {
+    final opt = e['asset_category'] == 'OPT';
+    final pc = e['put_call'];
+    final open = e['open_close'] == 'O';
+    final realized = asD(e['realized_pnl']);
+    if (opt && pc == 'P' && open) return 'Продано PUT ${asD(e['strike']).toStringAsFixed(0)}';
+    if (opt && pc == 'C' && open) return 'Продано CALL ${asD(e['strike']).toStringAsFixed(0)}';
+    if (opt && !open && realized != 0) return 'Закрито ${pc == 'P' ? 'PUT' : 'CALL'} ${asD(e['strike']).toStringAsFixed(0)}';
+    if (!opt) return realized != 0 ? 'Акції (закрито)' : 'Акції';
+    return 'Подія';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Колесо по тікерах')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _err != null
+              ? _ErrorView(_err!, _load)
+              : _data.isEmpty
+                  ? const Center(child: Text('Даних немає'))
+                  : ListView(padding: const EdgeInsets.all(12), children: [
+                      for (final w in _data) _tickerCard(w),
+                    ]),
+    );
+  }
+
+  Widget _tickerCard(dynamic w) {
+    final u = '${w['underlying']}';
+    final realized = asD(w['realized']);
+    final premium = asD(w['premium_collected']);
+    final shares = asD(w['shares']);
+    final events = (w['events'] as List?) ?? [];
+    final open = _open.contains(u);
+    String status;
+    if (shares > 0) status = 'Тримає ${shares.toStringAsFixed(0)} акцій';
+    else if ((w['short_puts'] ?? 0) > 0) status = 'Відкриті путани';
+    else if ((w['short_calls'] ?? 0) > 0) status = 'Відкриті коли';
+    else status = 'Немає відкритих';
+    return Card(child: Column(children: [
+      ListTile(
+        onTap: () => setState(() => open ? _open.remove(u) : _open.add(u)),
+        title: Text(u, style: headFont(size: 17, w: FontWeight.w700)),
+        subtitle: Text('Премія ${money(premium)} · $status', style: const TextStyle(fontSize: 12)),
+        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+          Text(money(realized), style: monoFont(size: 15, w: FontWeight.w700, c: cPnl(context, realized))),
+          Icon(open ? Icons.expand_less : Icons.expand_more, color: Colors.grey),
+        ]),
+      ),
+      if (open)
+        Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+          child: Column(children: [
+            const Divider(),
+            for (final e in events)
+              Padding(padding: const EdgeInsets.symmetric(vertical: 4),
+                child: Row(children: [
+                  SizedBox(width: 78, child: Text('${e['trade_date']}'.substring(5),
+                      style: const TextStyle(fontSize: 12, color: Colors.grey))),
+                  Expanded(child: Text(_eventLabel(e), style: const TextStyle(fontSize: 13))),
+                  Text(asD(e['proceeds']) > 0
+                      ? '+${money(asD(e['proceeds']))}'
+                      : (asD(e['realized_pnl']) != 0 ? money(asD(e['realized_pnl'])) : ''),
+                      style: monoFont(size: 12, w: FontWeight.w600,
+                          c: asD(e['proceeds']) > 0 ? cBlue(context) : cPnl(context, asD(e['realized_pnl'])))),
+                ]),
+              ),
+          ]),
+        ),
+    ]));
+  }
+}
+
+// ----------------- Екран «Календар експірацій» -----------------
+class ExpirationsPage extends StatefulWidget {
+  const ExpirationsPage({super.key});
+  @override
+  State<ExpirationsPage> createState() => _ExpirationsPageState();
+}
+
+class _ExpirationsPageState extends State<ExpirationsPage> {
+  List _data = [];
+  bool _loading = true;
+  String? _err;
+
+  @override
+  void initState() { super.initState(); _load(); }
+
+  Future<void> _load() async {
+    try {
+      final d = await Api.get('expirations');
+      setState(() { _data = d as List; _loading = false; });
+    } catch (e) { setState(() { _err = '$e'; _loading = false; }); }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // групуємо за датою
+    final byDate = <String, List>{};
+    for (final e in _data) {
+      (byDate['${e['expiry']}'] ??= []).add(e);
+    }
+    return Scaffold(
+      appBar: AppBar(title: const Text('Календар експірацій')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : _err != null
+              ? _ErrorView(_err!, _load)
+              : _data.isEmpty
+                  ? const Center(child: Text('Немає відкритих опціонів'))
+                  : ListView(padding: const EdgeInsets.all(12),
+                      children: byDate.entries.map((en) => _dateGroup(en.key, en.value)).toList()),
+    );
+  }
+
+  Widget _dateGroup(String date, List items) {
+    final days = asD(items.first['days']).toInt();
+    final soon = days <= 3;
+    final fmt = () { final p = date.split('-'); return p.length == 3 ? '${p[2]}.${p[1]}.${p[0]}' : date; }();
+    return Card(child: Padding(
+      padding: const EdgeInsets.all(14),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(Icons.event, size: 18, color: soon ? neg : gold),
+          const SizedBox(width: 8),
+          Text(fmt, style: headFont(size: 16, w: FontWeight.w700)),
+          const SizedBox(width: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+                color: (soon ? neg : Colors.grey).withOpacity(.15),
+                borderRadius: BorderRadius.circular(10)),
+            child: Text(days <= 0 ? 'сьогодні' : 'за $days дн.',
+                style: TextStyle(fontSize: 12, color: soon ? neg : Colors.grey, fontWeight: FontWeight.w600)),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        for (final e in items)
+          Padding(padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(children: [
+              Expanded(child: Text(
+                  '${e['underlying']}  ${e['put_call'] == 'P' ? 'PUT' : 'CALL'} ${asD(e['strike']).toStringAsFixed(0)}',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500))),
+              Text('${asD(e['quantity']).toStringAsFixed(0)} конт.',
+                  style: monoFont(size: 12, c: Colors.grey)),
+            ]),
+          ),
+      ]),
+    ));
+  }
 }
 
 // ----------------- Екран «Тиждень» -----------------
