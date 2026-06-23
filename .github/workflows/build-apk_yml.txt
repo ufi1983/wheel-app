@@ -1,0 +1,54 @@
+name: Build APK
+
+# Збирає Android APK у хмарі. Запускається при пуші або вручну (Actions -> Build APK -> Run workflow).
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      # 1) Створюємо платформні файли (android/, gradle тощо) у папці build_app
+      - name: Scaffold Flutter project
+        run: flutter create --org com.wheel --project-name wheel_app build_app
+
+      # 2) Підкладаємо наш код і залежності
+      - name: Inject sources
+        run: |
+          cp app_src/pubspec.yaml build_app/pubspec.yaml
+          cp app_src/lib/main.dart build_app/lib/main.dart
+
+      # 2.5) Android-правки: дозвіл на інтернет (критично для release!), біометрія
+      - name: Android tweaks
+        run: |
+          MANIFEST=build_app/android/app/src/main/AndroidManifest.xml
+          sed -i 's#<application#<uses-permission android:name="android.permission.INTERNET"/>\n    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>\n    <application#' "$MANIFEST"
+          # MainActivity -> FlutterFragmentActivity (потрібно для local_auth)
+          find build_app/android -name 'MainActivity.kt' -exec sed -i 's/FlutterActivity/FlutterFragmentActivity/g' {} +
+          echo '--- manifest head ---'; head -n 8 "$MANIFEST"
+
+      # 3) Збираємо APK
+      - name: Build release APK
+        working-directory: build_app
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      # 4) Викладаємо APK як артефакт для завантаження
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-app-apk
+          path: build_app/build/app/outputs/flutter-apk/app-release.apk
