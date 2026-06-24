@@ -540,7 +540,30 @@ class _OverviewPageState extends State<OverviewPage> {
         rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
         bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
       ),
-      lineTouchData: LineTouchData(enabled: false),
+      lineTouchData: LineTouchData(
+        enabled: true,
+        handleBuiltInTouches: true,
+        getTouchedSpotIndicator: (bar, indexes) => indexes.map((i) => TouchedSpotIndicatorData(
+          FlLine(color: Colors.grey.withOpacity(.4), strokeWidth: 1),
+          FlDotData(show: true, getDotPainter: (s, p, b, idx) =>
+              FlDotCirclePainter(radius: 4, color: bar.color ?? cPos(context),
+                  strokeWidth: 2, strokeColor: Theme.of(context).cardColor)),
+        )).toList(),
+        touchTooltipData: LineTouchTooltipData(
+          getTooltipColor: (_) => _dk(context) ? const Color(0xFF243042) : const Color(0xFF2A3343),
+          tooltipRoundedRadius: 8,
+          getTooltipItems: (spots) => spots.map((s) {
+            final i = s.x.toInt();
+            final wk = i >= 0 && i < series.length ? '${series[i]['label']}' : '';
+            final target = s.barIndex == 1;
+            return LineTooltipItem(
+              target ? 'Ціль ${money(s.y)}' : '$wk\nФакт ${money(s.y)}',
+              TextStyle(color: target ? const Color(0xFFE9C46A) : const Color(0xFF6FE0B0),
+                  fontSize: 11, fontWeight: FontWeight.w700),
+            );
+          }).toList(),
+        ),
+      ),
       lineBarsData: [
         LineChartBarData(spots: cumR, color: cPos(context), barWidth: 2.5,
             isCurved: true, dotData: FlDotData(show: false),
@@ -651,20 +674,37 @@ class _WheelPageState extends State<WheelPage> {
     else if ((w['short_puts'] ?? 0) > 0) status = 'Відкриті путани';
     else if ((w['short_calls'] ?? 0) > 0) status = 'Відкриті коли';
     else status = 'Немає відкритих';
-    return Card(child: Column(children: [
-      ListTile(
-        onTap: () => setState(() => open ? _open.remove(u) : _open.add(u)),
-        title: Text(u, style: headFont(size: 17, w: FontWeight.w700)),
-        subtitle: Text('Премія ${money(premium)} · $status', style: const TextStyle(fontSize: 12)),
-        trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text(money(realized), style: monoFont(size: 15, w: FontWeight.w700, c: cPnl(context, realized))),
-          Icon(open ? Icons.expand_less : Icons.expand_more, color: Colors.grey),
-        ]),
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 5),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: open ? gold.withOpacity(.55) : Colors.grey.withOpacity(_dk(context) ? .22 : .14),
+          width: open ? 1.5 : 1,
+        ),
+      ),
+      child: Column(children: [
+      Material(
+        color: open ? gold.withOpacity(_dk(context) ? .10 : .08) : Colors.transparent,
+        borderRadius: BorderRadius.vertical(
+          top: const Radius.circular(11),
+          bottom: Radius.circular(open ? 0 : 11)),
+        child: ListTile(
+          onTap: () => setState(() => open ? _open.remove(u) : _open.add(u)),
+          title: Text(u, style: headFont(size: 17, w: FontWeight.w700)),
+          subtitle: Text('Премія ${money(premium)} · $status', style: const TextStyle(fontSize: 12)),
+          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(money(realized), style: monoFont(size: 15, w: FontWeight.w700, c: cPnl(context, realized))),
+            Icon(open ? Icons.expand_less : Icons.expand_more, color: open ? gold : Colors.grey),
+          ]),
+        ),
       ),
       if (open)
         Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
           child: Column(children: [
-            const Divider(),
+            const Divider(height: 1),
+            const SizedBox(height: 6),
             for (final e in events)
               Padding(padding: const EdgeInsets.symmetric(vertical: 4),
                 child: Row(children: [
@@ -1118,23 +1158,23 @@ class _CalendarPageState extends State<CalendarPage> {
               width: prem > 0 ? 1 : .5,
             ),
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.start,
             children: [
               Text('$day', textAlign: TextAlign.right,
-                  style: TextStyle(fontSize: 11,
+                  style: TextStyle(fontSize: 15,
                       color: hasData ? Theme.of(context).textTheme.bodyMedium?.color : Colors.grey,
-                      fontWeight: hasData ? FontWeight.w600 : FontWeight.normal)),
+                      fontWeight: hasData ? FontWeight.w700 : FontWeight.w400)),
               if (prem > 0)
                 FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
                   child: Text(money(prem), maxLines: 1,
-                      style: monoFont(size: 11, w: FontWeight.w700, c: cBlue(context)))),
+                      style: monoFont(size: 14, w: FontWeight.w700, c: cBlue(context)))),
               if (real != 0)
                 FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
                   child: Text('${real > 0 ? '+' : ''}${money(real)}', maxLines: 1,
-                      style: monoFont(size: 10.5, w: FontWeight.w600, c: cPnl(context, real)))),
+                      style: monoFont(size: 13, w: FontWeight.w600, c: cPnl(context, real)))),
             ],
           ),
         ),
@@ -1164,17 +1204,26 @@ class _CalendarPageState extends State<CalendarPage> {
         child: Row(children: [
           for (final d in ['Нд','Пн','Вт','Ср','Чт','Пт','Сб'])
             Expanded(child: Center(child: Text(d,
-                style: const TextStyle(fontSize: 11, color: Colors.grey, fontWeight: FontWeight.w600)))),
+                style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w600)))),
         ]),
       ),
       const SizedBox(height: 6),
-      // сітка днів
+      // сітка днів — заповнює весь доступний простір
       Expanded(child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-        child: GridView.count(
-          crossAxisCount: 7, crossAxisSpacing: 6, mainAxisSpacing: 6, childAspectRatio: .80,
-          children: cells,
-        ),
+        padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
+        child: LayoutBuilder(builder: (ctx, c) {
+          final rows = (cells.length / 7).ceil().clamp(1, 6);
+          const sp = 6.0;
+          final cw = (c.maxWidth - sp * 6) / 7;
+          final ch = (c.maxHeight - sp * (rows - 1)) / rows;
+          final ratio = (ch > 0 && cw > 0) ? cw / ch : 0.8;
+          return GridView.count(
+            physics: const NeverScrollableScrollPhysics(),
+            crossAxisCount: 7, crossAxisSpacing: sp, mainAxisSpacing: sp,
+            childAspectRatio: ratio,
+            children: cells,
+          );
+        }),
       )),
     ]);
   }
