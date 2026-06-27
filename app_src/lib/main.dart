@@ -441,7 +441,7 @@ class _OverviewPageState extends State<OverviewPage> {
               const Text('Немає або не додано секцію Open Positions у Flex',
                   style: TextStyle(color: Colors.grey, fontSize: 12))
             else
-              ...positions.take(8).map((p) {
+              ...positions.map((p) {
                 final isOpt = p['asset_category'] == 'OPT';
                 final type = isOpt ? (p['put_call'] == 'P' ? 'PUT' : 'CALL') : '${p['asset_category']}';
                 final short = asD(p['quantity']) < 0;
