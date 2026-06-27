@@ -770,6 +770,7 @@ class _ExpirationsPageState extends State<ExpirationsPage> {
   Widget _dateGroup(String date, List items) {
     final days = asD(items.first['days']).toInt();
     final soon = days <= 3;
+    final datePrem = items.fold<double>(0, (s, e) => s + asD(e['open_premium']));
     final fmt = () { final p = date.split('-'); return p.length == 3 ? '${p[2]}.${p[1]}.${p[0]}' : date; }();
     return Card(child: Padding(
       padding: const EdgeInsets.all(14),
@@ -787,6 +788,9 @@ class _ExpirationsPageState extends State<ExpirationsPage> {
             child: Text(days <= 0 ? 'сьогодні' : 'за $days дн.',
                 style: TextStyle(fontSize: 12, color: soon ? neg : Colors.grey, fontWeight: FontWeight.w600)),
           ),
+          const Spacer(),
+          if (datePrem > 0)
+            Text(money(datePrem), style: monoFont(size: 15, w: FontWeight.w700, c: pos)),
         ]),
         const SizedBox(height: 8),
         for (final e in items)
@@ -797,6 +801,10 @@ class _ExpirationsPageState extends State<ExpirationsPage> {
                   style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500))),
               Text('${asD(e['quantity']).toStringAsFixed(0)} конт.',
                   style: monoFont(size: 12, c: Colors.grey)),
+              if (asD(e['open_premium']) > 0) ...[
+                Text(' · ', style: monoFont(size: 12, c: Colors.grey)),
+                Text(money(asD(e['open_premium'])), style: monoFont(size: 12, c: pos)),
+              ],
             ]),
           ),
       ]),
