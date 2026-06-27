@@ -255,6 +255,7 @@ class _HomePageState extends State<HomePage> {
       ),
       body: PageView(
         controller: _pc,
+        physics: const NeverScrollableScrollPhysics(), // свайпи між вкладками вимкнено
         onPageChanged: (v) => setState(() => _i = v),
         children: _pages,
       ),
