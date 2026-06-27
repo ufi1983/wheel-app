@@ -1126,7 +1126,6 @@ class _CalendarPageState extends State<CalendarPage> {
     const names = ['Січень','Лютий','Березень','Квітень','Травень','Червень',
       'Липень','Серпень','Вересень','Жовтень','Листопад','Грудень'];
     final first = DateTime(_month.year, _month.month, 1);
-    final firstDow = first.weekday % 7; // 0=Нд
     final daysIn = DateTime(_month.year, _month.month + 1, 0).day;
     double sumPrem = 0, sumReal = 0;
     _days.forEach((k, v) { sumPrem += asD(v['premium_sold']); sumReal += asD(v['realized']); });
@@ -1134,8 +1133,12 @@ class _CalendarPageState extends State<CalendarPage> {
 
     // комірки днів (без днів тижня — вони в окремому рядку)
     final cells = <Widget>[];
-    for (int i = 0; i < firstDow; i++) cells.add(const SizedBox());
+    // лише Пн–Пт: відступ до колонки першого буднього дня місяця
+    final leadCol = (first.weekday >= 1 && first.weekday <= 5) ? first.weekday - 1 : 0;
+    for (int i = 0; i < leadCol; i++) cells.add(const SizedBox());
     for (int day = 1; day <= daysIn; day++) {
+      final wd = DateTime(_month.year, _month.month, day).weekday;
+      if (wd == 6 || wd == 7) continue; // субота/неділя — без них (торгів немає)
       final key = '${_month.year}-${_month.month.toString().padLeft(2,'0')}-${day.toString().padLeft(2,'0')}';
       final v = _days[key];
       final prem = v != null ? asD(v['premium_sold']) : 0.0;
@@ -1158,23 +1161,23 @@ class _CalendarPageState extends State<CalendarPage> {
               width: prem > 0 ? 1 : .5,
             ),
           ),
-          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisAlignment: MainAxisAlignment.start,
             children: [
               Text('$day', textAlign: TextAlign.right,
-                  style: TextStyle(fontSize: 15,
+                  style: TextStyle(fontSize: 18,
                       color: hasData ? Theme.of(context).textTheme.bodyMedium?.color : Colors.grey,
                       fontWeight: hasData ? FontWeight.w700 : FontWeight.w400)),
               if (prem > 0)
                 FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
                   child: Text(money(prem), maxLines: 1,
-                      style: monoFont(size: 14, w: FontWeight.w700, c: cBlue(context)))),
+                      style: monoFont(size: 16, w: FontWeight.w700, c: cBlue(context)))),
               if (real != 0)
                 FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.centerLeft,
                   child: Text('${real > 0 ? '+' : ''}${money(real)}', maxLines: 1,
-                      style: monoFont(size: 13, w: FontWeight.w600, c: cPnl(context, real)))),
+                      style: monoFont(size: 15, w: FontWeight.w600, c: cPnl(context, real)))),
             ],
           ),
         ),
@@ -1202,9 +1205,9 @@ class _CalendarPageState extends State<CalendarPage> {
       Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12),
         child: Row(children: [
-          for (final d in ['Нд','Пн','Вт','Ср','Чт','Пт','Сб'])
+          for (final d in ['Пн','Вт','Ср','Чт','Пт'])
             Expanded(child: Center(child: Text(d,
-                style: const TextStyle(fontSize: 13, color: Colors.grey, fontWeight: FontWeight.w600)))),
+                style: const TextStyle(fontSize: 14, color: Colors.grey, fontWeight: FontWeight.w600)))),
         ]),
       ),
       const SizedBox(height: 6),
@@ -1212,14 +1215,14 @@ class _CalendarPageState extends State<CalendarPage> {
       Expanded(child: Padding(
         padding: const EdgeInsets.fromLTRB(10, 0, 10, 10),
         child: LayoutBuilder(builder: (ctx, c) {
-          final rows = (cells.length / 7).ceil().clamp(1, 6);
+          final rows = (cells.length / 5).ceil().clamp(1, 6);
           const sp = 6.0;
-          final cw = (c.maxWidth - sp * 6) / 7;
+          final cw = (c.maxWidth - sp * 4) / 5;
           final ch = (c.maxHeight - sp * (rows - 1)) / rows;
           final ratio = (ch > 0 && cw > 0) ? cw / ch : 0.8;
           return GridView.count(
             physics: const NeverScrollableScrollPhysics(),
-            crossAxisCount: 7, crossAxisSpacing: sp, mainAxisSpacing: sp,
+            crossAxisCount: 5, crossAxisSpacing: sp, mainAxisSpacing: sp,
             childAspectRatio: ratio,
             children: cells,
           );
